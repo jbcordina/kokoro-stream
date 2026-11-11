@@ -1,0 +1,13 @@
+services:
+  kokoro-stream:
+    build: .
+    container_name: kokoro-stream
+    ports:
+      - "8003:8000"
+    volumes:
+      - ./app:/srv/app
+      - hf-cache:/cache/huggingface
+    restart: unless-stopped
+
+volumes:
+  hf-cache:

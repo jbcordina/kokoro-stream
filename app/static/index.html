@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kokoro streaming</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#8b93a7; --accent:#6ea8ff; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f5f6f9; --panel:#fff; --line:#d9dce5; --text:#161a22; --muted:#667085; --accent:#2563eb; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 1.2rem; margin: 0 0 16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  textarea { width:100%; min-height:130px; background:transparent; color:inherit; border:1px solid var(--line);
+             border-radius:8px; padding:10px; font:inherit; resize:vertical; }
+  /* Aperçu du découpage : calque de surlignage aligné sous le textarea transparent */
+  .editor { position:relative; }
+  .editor textarea, .backdrop { line-height:1.5; white-space:pre-wrap; overflow-wrap:break-word; scrollbar-gutter:stable; }
+  .editor textarea { display:block; position:relative; overflow-y:auto; }
+  .backdrop { position:absolute; inset:0; padding:10px; border:1px solid transparent; font:inherit; color:transparent;
+              overflow:hidden; pointer-events:none; }
+  .backdrop mark { color:transparent; border-radius:3px; }
+  .backdrop .s0 { background:rgba(110,168,255,.3); }
+  .backdrop .s1 { background:rgba(255,176,59,.3); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-top:12px; }
+  label { display:flex; flex-direction:column; font-size:.8rem; color:var(--muted); gap:4px; }
+  select, input[type=range] { color:inherit; background:transparent; border:1px solid var(--line); border-radius:6px; padding:6px; }
+  button { border:0; border-radius:8px; padding:10px 18px; font:inherit; cursor:pointer; background:var(--accent); color:#fff; }
+  button.secondary { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:16px; }
+  .stat { border:1px solid var(--line); border-radius:8px; padding:10px; }
+  .stat b { display:block; font-size:1.3rem; font-variant-numeric:tabular-nums; }
+  .stat span { font-size:.75rem; color:var(--muted); }
+  fieldset { border:1px solid var(--line); border-radius:8px; margin:12px 0 0; padding:4px 12px 12px; }
+  legend { font-size:.8rem; color:var(--text); padding:0 4px; }
+  fieldset .row { margin-top:4px; }
+  output { color:var(--text); font-variant-numeric:tabular-nums; }
+  .hint { font-size:.8rem; color:var(--muted); margin:12px 0 0; }
+  #presetRow > *, #voiceRow > * { flex:1 1 140px; }
+  #presetRow select, #presetRow input, #presetRow button, #voice { height:40px; padding:0 12px; font:inherit; font-size:.9rem; }
+  #splitRow > label:not(.check) { flex:0 0 130px; }
+  label.check { flex-direction:row; align-items:center; gap:6px; height:40px; }
+  .count { font-size:.8rem; color:var(--muted); align-self:center; }
+  input[type=text] { height:40px; padding:0 12px; font:inherit; font-size:.9rem; color:inherit; background:transparent; border:1px solid var(--line); border-radius:6px; }
+  fieldset .row > label { flex:1 1 150px; }
+  input[type=range] { width:100%; }
+  /* Ordinateur : texte et lecture à gauche (fixes), effets à droite */
+  @media (min-width: 960px) {
+    .card { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr); gap:24px; align-items:start; }
+    .left { position:sticky; top:16px; }
+    textarea { min-height:240px; }
+    #fx > .hint:first-child { margin-top:0; }
+  }
+  #status { margin-top:12px; font-size:.85rem; color:var(--muted); min-height:1.3em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kokoro TTS — lecture en streaming</h1>
+  <div class="card">
+    <div class="left">
+    <div class="editor"><div id="backdrop" class="backdrop" aria-hidden="true"></div><textarea id="text">A l’attention des humains survivants.| Conformément aux règles du syndicat sous-section 543 du Code des réserves élémentaires précieuses et faute d’avoir reçu un recours pour les droits minéraux et élémentaires dans les 50 premiers solaires après contact initial - nous nous sommes emparés de votre planète et ses gisements élémentaires sont en cours d’exploitation par le régent planétaire désigné.| Tous les intérieurs de votre monde ont été écrasés, et ses matériaux bruts - de nature organique et inanimée - sont en cours d’exploitation pour extraction des matières requises.| Bienvenue &lt;lang="en"&gt;crawlers&lt;/lang&gt; dans cette saison de &lt;lang="en"&gt;Dungeon World Earth&lt;/lang&gt; organisée par la compagnie Borant!</textarea></div>
+    <div class="row" id="voiceRow">
+      <label><span>Voix</span><select id="voice"></select></label>
+      <label><span>Vitesse <output></output></span><input id="speed" type="range" min="0.6" max="1.6" step="0.05" value="1"></label>
+    </div>
+    <div class="row" id="splitRow">
+      <label class="check"><input id="showSplit" type="checkbox" checked>Afficher le découpage</label>
+      <label class="check"><input id="autoSplit" type="checkbox" checked>Découpage auto (phrases)</label>
+      <label><span>Séparateur forcé</span><input id="sep" type="text" maxlength="5" value="|"></label>
+      <span id="segCount" class="count"></span>
+    </div>
+    <div class="row">
+      <button id="go">Lire</button>
+      <button id="stop" class="secondary" disabled>Stop</button>
+      <button id="dlRaw" class="secondary" disabled>MP3 voix brute</button>
+      <button id="dlFx" class="secondary" disabled>MP3 avec effets</button>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="ttfa">–</b><span>1er son (ms, depuis le clic)</span></div>
+      <div class="stat"><b id="segs">–</b><span>segments reçus</span></div>
+      <div class="stat"><b id="total">–</b><span>fin de génération (ms)</span></div>
+    </div>
+    <div id="status"></div>
+    </div>
+    <div id="fx">
+      <p class="hint">Effets appliqués dans le navigateur (Web Audio). La hauteur s'applique à la prochaine lecture,
+        le reste s'entend en direct.</p>
+      <div class="row" id="presetRow">
+        <label><span>Préréglage</span><select id="preset">
+          <option value="">Aucun</option><option value="donjon" selected>IA du donjon</option><option value="telephone">Téléphone</option><option value="radio">Radio</option>
+          <option value="robot">Robot</option><option value="grotte">Grotte</option>
+          <option value="talkie">Talkie-walkie</option><option value="megaphone">Mégaphone</option>
+          <option value="cathedrale">Cathédrale</option><option value="sdb">Salle de bain</option>
+          <option value="stade">Stade</option><option value="geant">Géant</option><option value="lutin">Lutin</option>
+          <option value="mechant">Méchant de film</option><option value="fantome">Fantôme</option>
+          <option value="radio40">Vieille radio (années 40)</option><option value="podcast">Voix off / podcast</option>
+          <option value="sousleau">Sous l'eau</option><option value="dalek">Dalek / Cylon</option>
+          <option value="gauche">Côté gauche</option><option value="droite">Côté droit</option>
+        </select></label>
+        <label><span>Nom du préréglage</span><input id="presetName" type="text" maxlength="40" placeholder="Mon préréglage"></label>
+        <button id="savePreset" class="secondary" type="button">Enregistrer</button>
+        <button id="delPreset" class="secondary" type="button" disabled>Supprimer</button>
+      </div>
+      <fieldset><legend>Hauteur</legend><div class="row">
+        <label><span>Hauteur (demi-tons) <output></output></span><input id="pitch" type="range" min="-12" max="12" step="1" value="0"></label>
+        <label><span>Tempo constant</span><input id="keepTempo" type="checkbox" checked></label>
+        <label><span>Vibrato (profondeur) <output></output></span><input id="vibDepth" type="range" min="0" max="1" step="0.05" value="0"></label>
+        <label><span>Vibrato (Hz) <output></output></span><input id="vibRate" type="range" min="0.5" max="12" step="0.5" value="5"></label>
+      </div></fieldset>
+      <fieldset><legend>Timbre</legend><div class="row">
+        <label><span>Graves 200 Hz (dB) <output></output></span><input id="bass" type="range" min="-15" max="15" step="1" value="0"></label>
+        <label><span>Présence 2,5 kHz (dB) <output></output></span><input id="presence" type="range" min="-15" max="15" step="1" value="0"></label>
+        <label><span>Aigus 6 kHz (dB) <output></output></span><input id="treble" type="range" min="-15" max="15" step="1" value="0"></label>
+        <label><span>Coupe-bas (Hz) <output></output></span><input id="hp" type="range" min="20" max="1000" step="10" value="20"></label>
+        <label><span>Coupe-haut (Hz) <output></output></span><input id="lp" type="range" min="500" max="20000" step="100" value="20000"></label>
+      </div></fieldset>
+      <fieldset><legend>Dynamique et couleur</legend><div class="row">
+        <label><span>Compression <output></output></span><input id="comp" type="range" min="0" max="1" step="0.05" value="0"></label>
+        <label><span>Saturation <output></output></span><input id="drive" type="range" min="0" max="20" step="0.5" value="0"></label>
+        <label><span>Robot (mix) <output></output></span><input id="robot" type="range" min="0" max="1" step="0.05" value="0"></label>
+        <label><span>Robot (Hz) <output></output></span><input id="robotFreq" type="range" min="10" max="200" step="5" value="50"></label>
+      </div></fieldset>
+      <fieldset><legend>Espace</legend><div class="row">
+        <label><span>Halo (mix) <output></output></span><input id="wet" type="range" min="0" max="1" step="0.05" value="0"></label>
+        <label><span>Halo (durée s) <output></output></span><input id="decay" type="range" min="0.3" max="6" step="0.1" value="2"></label>
+        <label><span>Halo (brillance Hz) <output></output></span><input id="tone" type="range" min="1000" max="12000" step="500" value="5000"></label>
+        <label><span>Écho (mix) <output></output></span><input id="echoMix" type="range" min="0" max="1" step="0.05" value="0"></label>
+        <label><span>Écho (délai s) <output></output></span><input id="echoTime" type="range" min="0.02" max="1" step="0.01" value="0.25"></label>
+        <label><span>Écho (répétitions) <output></output></span><input id="echoFb" type="range" min="0" max="0.9" step="0.05" value="0.3"></label>
+      </div></fieldset>
+      <fieldset><legend>Sortie</legend><div class="row">
+        <label><span>Panoramique <output></output></span><input id="pan" type="range" min="-1" max="1" step="0.1" value="0"></label>
+        <label><span>Volume <output></output></span><input id="volume" type="range" min="0" max="2" step="0.05" value="1"></label>
+        <button id="reset" class="secondary" type="button">Réinitialiser les effets</button>
+      </div></fieldset>
+    </div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const v = (id) => +$(id).value;
+let ws = null, ctx = null, nextTime = 0, sources = [], fx = null, pitchRate = 1;
+let take = { pcm: [], rate: 24000, pitchRate: 1 };      // dernier audio reçu, pour le téléchargement
+
+// Réponse impulsionnelle synthétique : bruit stéréo à décroissance exponentielle
+function impulse(c, seconds) {
+  const len = Math.floor(c.sampleRate * seconds), ir = c.createBuffer(2, len, c.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = ir.getChannelData(c);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+  }
+  return ir;
+}
+
+// Saturation douce (tanh) ; 0 = pas de distorsion
+function satCurve(k) {
+  if (!k) return null;
+  const c = new Float32Array(1024);
+  for (let i = 0; i < c.length; i++) { const x = i / (c.length - 1) * 2 - 1; c[i] = Math.tanh(k * x) / Math.tanh(k); }
+  return c;
+}
+
+// entrée -> filtres -> égaliseur -> saturation -> vibrato -> robot -> compresseur -> (sec | halo | écho) -> pan -> volume
+// Construit la chaîne sur n'importe quel contexte (temps réel ou OfflineAudioContext pour l'export)
+function buildFx(ctx) {
+  const g = () => ctx.createGain();
+  const f = (type, freq) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = freq; return b; };
+  const fx = { input: g(), hp: f('highpass', 20), lp: f('lowpass', 20000),
+         low: f('lowshelf', 200), mid: f('peaking', 2500), high: f('highshelf', 6000),
+         shaper: ctx.createWaveShaper(), vib: ctx.createDelay(0.05), vibLfo: ctx.createOscillator(), vibDepth: g(),
+         ringDry: g(), ring: g(), ringWet: g(), ringOsc: ctx.createOscillator(), comp: ctx.createDynamicsCompressor(),
+         dry: g(), verb: ctx.createConvolver(), tone: f('lowpass', 5000), wet: g(),
+         echo: ctx.createDelay(2), echoFb: g(), echoWet: g(), pan: ctx.createStereoPanner(), out: g() };
+  fx.shaper.oversample = '4x';
+  fx.vib.delayTime.value = 0.01;                            // le LFO module ce délai autour de 10 ms
+  fx.vibLfo.connect(fx.vibDepth).connect(fx.vib.delayTime);
+  fx.ring.gain.value = 0;                                   // modulation en anneau : signal × sinusoïde
+  fx.ringOsc.connect(fx.ring.gain);
+  fx.vibLfo.start(); fx.ringOsc.start();
+  fx.input.connect(fx.hp).connect(fx.lp).connect(fx.low).connect(fx.mid).connect(fx.high).connect(fx.shaper).connect(fx.vib);
+  fx.vib.connect(fx.ringDry).connect(fx.comp);
+  fx.vib.connect(fx.ring).connect(fx.ringWet).connect(fx.comp);
+  fx.comp.connect(fx.dry).connect(fx.pan);
+  fx.comp.connect(fx.verb).connect(fx.tone).connect(fx.wet).connect(fx.pan);
+  fx.comp.connect(fx.echo).connect(fx.echoWet).connect(fx.pan);
+  fx.echo.connect(fx.echoFb).connect(fx.echo);
+  fx.pan.connect(fx.out).connect(ctx.destination);
+  applyFx(fx); fx.verb.buffer = impulse(ctx, v('decay'));
+  return fx;
+}
+
+function applyFx(f = fx) {
+  if (!f) return;
+  const m = v('wet');                                       // mix à puissance constante
+  f.dry.gain.value = Math.cos(m * Math.PI / 2);
+  f.wet.gain.value = Math.sin(m * Math.PI / 2);
+  f.tone.frequency.value = v('tone');
+  f.hp.frequency.value = v('hp'); f.lp.frequency.value = v('lp');
+  f.low.gain.value = v('bass'); f.mid.gain.value = v('presence'); f.high.gain.value = v('treble');
+  f.shaper.curve = satCurve(v('drive'));
+  f.vibLfo.frequency.value = v('vibRate'); f.vibDepth.gain.value = v('vibDepth') * 0.003;
+  f.ringDry.gain.value = 1 - v('robot'); f.ringWet.gain.value = v('robot'); f.ringOsc.frequency.value = v('robotFreq');
+  f.comp.threshold.value = -50 * v('comp'); f.comp.ratio.value = 1 + 19 * v('comp');
+  f.echoWet.gain.value = v('echoMix'); f.echo.delayTime.value = v('echoTime'); f.echoFb.gain.value = v('echoFb');
+  f.pan.pan.value = v('pan'); f.out.gain.value = v('volume');
+}
+
+document.querySelectorAll('input[type=range]').forEach(i => {   // valeur affichée à côté de chaque curseur
+  const o = i.parentElement.querySelector('output'), show = () => { if (o) o.textContent = i.value; };
+  i.addEventListener('input', show); show();
+});
+document.querySelectorAll('#fx input:not(#presetName)').forEach(i => i.addEventListener('input', () => applyFx()));
+$('decay').onchange = () => { if (ctx) fx.verb.buffer = impulse(ctx, v('decay')); };
+// Valeurs non citées = valeurs par défaut
+const PRESETS = {
+  telephone: { hp: 300, lp: 3400, presence: 6, comp: 0.6, drive: 3 },
+  radio: { hp: 150, lp: 6000, bass: -4, presence: 5, comp: 0.8, drive: 1.5, wet: 0.1, decay: 0.5 },
+  robot: { robot: 1, robotFreq: 30, comp: 0.5, echoMix: 0.3, echoTime: 0.05, echoFb: 0.4 },
+  donjon: { pitch: -4, robot: 0.15, robotFreq: 30, comp: 0.5, echoMix: 0.3, echoTime: 0.05, echoFb: 0.4 },
+  grotte: { bass: 3, wet: 0.6, decay: 5, tone: 3000, echoMix: 0.35, echoTime: 0.4, echoFb: 0.45 },
+  talkie: { hp: 500, lp: 2500, drive: 8, comp: 1 },
+  megaphone: { hp: 400, lp: 4000, presence: 10, drive: 12, echoMix: 0.3, echoTime: 0.1, echoFb: 0.2 },
+  cathedrale: { bass: -2, wet: 0.7, decay: 6, tone: 8000 },
+  sdb: { wet: 0.4, decay: 0.8, tone: 10000 },
+  stade: { presence: 4, wet: 0.3, decay: 2.5, echoMix: 0.4, echoTime: 0.5, echoFb: 0.3 },
+  geant: { pitch: -7, keepTempo: false, bass: 6, wet: 0.15 },
+  lutin: { pitch: 7, keepTempo: false, treble: 4 },
+  mechant: { pitch: -5, bass: 8, comp: 0.7, drive: 2 },
+  fantome: { vibDepth: 0.6, vibRate: 3, lp: 4000, wet: 0.7, decay: 4 },
+  radio40: { hp: 300, lp: 3000, drive: 4, vibDepth: 0.15, vibRate: 0.5 },
+  podcast: { hp: 80, bass: 3, presence: 3, comp: 0.7 },
+  sousleau: { lp: 800, vibDepth: 0.8, vibRate: 2, wet: 0.3, decay: 0.6 },
+  dalek: { robot: 1, robotFreq: 80, drive: 5, echoMix: 0.4, echoTime: 0.03, echoFb: 0.6 },
+  gauche: { pan: -0.8 },
+  droite: { pan: 0.8 },
+};
+function setFx(values = {}) {
+  document.querySelectorAll('#fx input:not(#presetName)').forEach(i => {
+    const x = i.id in values ? values[i.id] : (i.type === 'checkbox' ? i.defaultChecked : i.defaultValue);
+    if (i.type === 'checkbox') i.checked = x; else i.value = x;
+    i.dispatchEvent(new Event('input'));
+  });
+  $('decay').onchange();
+}
+// Préréglages perso : stockés dans le navigateur (localStorage), valeur d'option préfixée par "u:"
+const STORE = 'kokoro-presets';
+const userPresets = (() => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } })();
+function renderPresets(selected) {
+  $('mine')?.remove();
+  const names = Object.keys(userPresets).sort((a, b) => a.localeCompare(b));
+  if (names.length) {
+    const g = document.createElement('optgroup'); g.id = 'mine'; g.label = 'Mes préréglages';
+    names.forEach(n => g.append(new Option(n, 'u:' + n)));
+    $('preset').append(g);
+  }
+  if (selected !== undefined) $('preset').value = selected;
+  const p = $('preset').value;
+  $('delPreset').disabled = !p.startsWith('u:');
+  $('presetName').value = p.startsWith('u:') ? p.slice(2) : '';
+}
+function storePresets() {
+  try { localStorage.setItem(STORE, JSON.stringify(userPresets)); }
+  catch (e) { $('status').textContent = 'Stockage indisponible : préréglage perdu au rechargement.'; }
+}
+$('preset').onchange = () => {
+  const p = $('preset').value;
+  setFx(p.startsWith('u:') ? userPresets[p.slice(2)] : PRESETS[p]);
+  renderPresets(p);
+};
+$('savePreset').onclick = () => {
+  const cur = $('preset').value.startsWith('u:') ? $('preset').value.slice(2) : '';
+  const name = $('presetName').value.trim();
+  if (!name) { $('status').textContent = 'Saisis un nom de préréglage.'; $('presetName').focus(); return; }
+  if (name !== cur && name in userPresets && !confirm(`Remplacer « ${name} » ?`)) return;
+  userPresets[name] = Object.fromEntries([...document.querySelectorAll('#fx input:not(#presetName)')]
+    .map(i => [i.id, i.type === 'checkbox' ? i.checked : +i.value]));
+  storePresets(); renderPresets('u:' + name);
+};
+$('delPreset').onclick = () => {
+  const name = $('preset').value.slice(2);
+  if (!confirm(`Supprimer « ${name} » ?`)) return;
+  delete userPresets[name]; storePresets(); renderPresets('');
+};
+$('presetName').onkeydown = (e) => { if (e.key === 'Enter') $('savePreset').click(); };
+renderPresets();
+setFx(PRESETS[$('preset').value]);                 // préréglage par défaut : IA du donjon
+$('reset').onclick = () => { renderPresets(''); setFx(); };
+
+// Découpage calculé par le serveur (/split) : l'aperçu est exactement ce qui sera synthétisé
+let splitTimer;
+const esc = (t) => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+function refreshSplit() {
+  clearTimeout(splitTimer);
+  if (!$('showSplit').checked) { $('backdrop').innerHTML = ''; $('segCount').textContent = ''; return; }
+  splitTimer = setTimeout(async () => {
+    const text = $('text').value;
+    try {
+      const r = await fetch('/split', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, separator: $('sep').value, auto_split: $('autoSplit').checked }) });
+      if (!r.ok) throw new Error();
+      const { segments } = await r.json();
+      if (text !== $('text').value) return;                   // texte modifié entre-temps
+      const cps = Array.from(text), part = (a, b) => esc(cps.slice(a, b).join(''));   // positions en points de code
+      let html = '', pos = 0;
+      segments.forEach(([a, b], i) => { html += part(pos, a) + `<mark class="s${i % 2}">${part(a, b)}</mark>`; pos = b; });
+      $('backdrop').innerHTML = html + part(pos) + ' ';
+      $('segCount').textContent = `${segments.length} segment${segments.length > 1 ? 's' : ''}`;
+      syncScroll();
+    } catch (e) { $('segCount').textContent = 'Aperçu indisponible (texte vide ou > 5000 caractères ?)'; }
+  }, 150);
+}
+const syncScroll = () => { $('backdrop').scrollTop = $('text').scrollTop; };
+$('text').addEventListener('input', refreshSplit);
+$('text').addEventListener('scroll', syncScroll);
+['sep', 'autoSplit', 'showSplit'].forEach(id => $(id).addEventListener('input', refreshSplit));
+refreshSplit();
+
+fetch('/voices').then(r => r.json()).then(d => {
+  $('voice').innerHTML = d.voices.map(v => `<option${v === d.default ? ' selected' : ''}>${v}</option>`).join('');
+}).catch(() => { $('voice').innerHTML = '<option>ff_siwis</option>'; });
+
+function stopAll() {
+  sources.forEach(s => { try { s.stop(); } catch (e) {} });
+  sources = [];
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  $('go').disabled = false; $('stop').disabled = true; updateDl();
+}
+
+function updateDl() { $('dlRaw').disabled = $('dlFx').disabled = !take.pcm.length || !!ws; }
+
+function concatPcm() {
+  const all = new Float32Array(take.pcm.reduce((n, p) => n + p.length, 0));
+  take.pcm.reduce((o, p) => (all.set(p, o), o + p.length), 0);
+  return all;
+}
+
+// Rejoue la prise dans un contexte hors ligne avec les effets actuels (la hauteur est celle de la lecture)
+function renderFx() {
+  const pcm = concatPcm(), SR = 48000;
+  const tail = v('decay') + 3;  // ponytail: queue fixe, coupe un écho très long (répétitions ≥ 0,8)
+  const oc = new OfflineAudioContext(2, Math.ceil((pcm.length / take.rate / take.pitchRate + tail) * SR), SR);
+  const buf = oc.createBuffer(1, pcm.length, take.rate);
+  buf.copyToChannel(pcm, 0);
+  const src = oc.createBufferSource();
+  src.buffer = buf; src.playbackRate.value = take.pitchRate; src.connect(buildFx(oc).input); src.start();
+  return oc.startRendering();
+}
+
+// WAV PCM 16 bits entrelacé ; l'encodage mp3 est fait par ffmpeg côté serveur
+function wav(chans, sr) {
+  const n = chans[0].length, nc = chans.length, size = n * nc * 2, dv = new DataView(new ArrayBuffer(44 + size));
+  const str = (o, s) => [...s].forEach((ch, i) => dv.setUint8(o + i, ch.charCodeAt(0)));
+  str(0, 'RIFF'); dv.setUint32(4, 36 + size, true); str(8, 'WAVEfmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, nc, true); dv.setUint32(24, sr, true); dv.setUint32(28, sr * nc * 2, true);
+  dv.setUint16(32, nc * 2, true); dv.setUint16(34, 16, true); str(36, 'data'); dv.setUint32(40, size, true);
+  for (let i = 0, o = 44; i < n; i++) for (let c = 0; c < nc; c++, o += 2)
+    dv.setInt16(o, Math.max(-1, Math.min(1, chans[c][i])) * 32767, true);
+  return new Blob([dv], { type: 'audio/wav' });
+}
+
+async function download(withFx) {
+  $('dlRaw').disabled = $('dlFx').disabled = true;
+  $('status').textContent = withFx ? 'Rendu des effets et encodage mp3…' : 'Encodage mp3…';
+  try {
+    const b = withFx ? await renderFx() : null;
+    const body = b ? wav([b.getChannelData(0), b.getChannelData(1)], b.sampleRate) : wav([concatPcm()], take.rate);
+    const r = await fetch('/v1/audio/encode', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob()); a.download = withFx ? 'kokoro-effets.mp3' : 'kokoro.mp3'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    $('status').textContent = 'MP3 téléchargé.';
+  } catch (err) { $('status').textContent = 'Erreur mp3 : ' + err.message; }
+  updateDl();
+}
+$('dlRaw').onclick = () => download(false);
+$('dlFx').onclick = () => download(true);
+
+function playChunk(buf, rate) {
+  const i16 = new Int16Array(buf);
+  const f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+  take.pcm.push(f32);
+  const ab = ctx.createBuffer(1, f32.length, rate);
+  ab.copyToChannel(f32, 0);
+  const src = ctx.createBufferSource();
+  src.buffer = ab; src.playbackRate.value = pitchRate; src.connect(fx.input);
+  nextTime = Math.max(ctx.currentTime + 0.03, nextTime);   // enchaîne les segments sans trou
+  src.start(nextTime);
+  nextTime += ab.duration / pitchRate;
+  src.onended = () => {
+    sources = sources.filter(x => x !== src);
+    if (!sources.length && !ws) $('stop').disabled = true;
+  };
+  sources.push(src);
+}
+
+$('go').onclick = () => {
+  stopAll();
+  if (!ctx) { ctx = new (window.AudioContext || window.webkitAudioContext)(); fx = buildFx(ctx); }
+  ctx.resume().then(() => {                                 // exige un geste utilisateur (le clic)
+    if (ctx.state !== 'running') $('status').textContent = `Audio bloqué par le navigateur (état : ${ctx.state}).`;
+  });
+  nextTime = 0;
+  pitchRate = 2 ** (v('pitch') / 12);                     // hauteur via la vitesse de lecture...
+  const speed = $('keepTempo').checked ? v('speed') / pitchRate : v('speed');   // ...compensée côté synthèse
+  take = { pcm: [], rate: 24000, pitchRate };
+  $('ttfa').textContent = $('segs').textContent = $('total').textContent = '–';
+  $('status').textContent = 'Connexion…';
+  $('go').disabled = true; $('stop').disabled = false;
+
+  const t0 = performance.now(); let segs = 0, rate = 24000;
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/tts`);
+  ws.binaryType = 'arraybuffer';
+  updateDl();
+  ws.onopen = () => ws.send(JSON.stringify({ text: $('text').value, voice: $('voice').value, speed,
+                                              separator: $('sep').value, auto_split: $('autoSplit').checked }));
+  ws.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      const m = JSON.parse(e.data);
+      if (m.type === 'start') { rate = take.rate = m.sample_rate; $('status').textContent = 'Synthèse…'; }
+      if (m.type === 'error') { $('status').textContent = 'Erreur : ' + m.message; }
+      if (m.type === 'done') {
+        $('total').textContent = Math.round(performance.now() - t0);
+        $('status').textContent = 'Génération terminée.';
+        ws.close(); ws = null;                              // Stop reste actif tant que l'audio joue
+        $('go').disabled = false; $('stop').disabled = !sources.length; updateDl();
+      }
+      return;
+    }
+    if (segs === 0) $('ttfa').textContent = Math.round(performance.now() - t0);
+    segs++; $('segs').textContent = segs;
+    try { playChunk(e.data, rate); } catch (err) { $('status').textContent = 'Erreur audio : ' + err.message; }
+  };
+  ws.onerror = () => { $('status').textContent = 'Erreur de connexion WebSocket.'; stopAll(); };
+};
+$('stop').onclick = () => { stopAll(); $('status').textContent = 'Arrêté.'; };
+</script>
+</body>
+</html>
